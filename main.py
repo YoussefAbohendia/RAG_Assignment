@@ -1,22 +1,20 @@
 import os
+import fitz
+import docx
+import faiss
+import pickle
+import numpy as np
 from pathlib import Path
 from typing import List, Dict
-import fitz  # PyMuPDF for PDFs
-import docx  # python-docx for Word documents
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain.text_splitter import CharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 from langchain.embeddings import HuggingFaceEmbeddings
-import faiss
-import numpy as np
-import pickle
 from langchain.vectorstores import FAISS
 from langchain.schema import Document
 from transformers import pipeline
 
-# ------------------------------
-# Task 1.3 - Load documents
-# ------------------------------
+
 def load_documents(directory: str) -> List[Dict]:
     documents = []
     for file_path in Path(directory).glob("*"):
@@ -33,7 +31,7 @@ def load_documents(directory: str) -> List[Dict]:
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
             else:
-                print(f"⚠️ Unsupported file type: {file_path.name}")
+                print(f"Unsupported file type: {file_path.name}")
                 continue
 
             documents.append({
@@ -45,12 +43,10 @@ def load_documents(directory: str) -> List[Dict]:
             })
 
         except Exception as e:
-            print(f"❌ Error reading {file_path.name}: {e}")
+            print(f"Error reading {file_path.name}: {e}")
     return documents
 
-# ------------------------------
-# Task 2.1 - Split into chunks
-# ------------------------------
+
 def split_documents(docs: List[Dict], chunk_size=500, chunk_overlap=50) -> List[Dict]:
     splitter = CharacterTextSplitter(
         separator="\n",
@@ -73,20 +69,21 @@ def split_documents(docs: List[Dict], chunk_size=500, chunk_overlap=50) -> List[
             })
     return chunks
 
-# ------------------------------
-# Task 2.2 - Embed and save to FAISS
-# ------------------------------
+
+
 def embed_and_store(chunks: List[Dict], model_name: str, faiss_index_path: str):
-    print(f"\n🔍 Loading embedding model: {model_name}")
+    """Supports embedding with multiple models. e.g., MiniLM and Paraphrase-MiniLM"""
+    
+    print(f"\nLoading embedding model: {model_name}")
     model = SentenceTransformer(model_name)
 
     texts = [chunk["text"] for chunk in chunks]
     metadatas = [chunk["metadata"] for chunk in chunks]
 
-    print("🧠 Generating embeddings...")
+    print("Generating embeddings...")
     embeddings = model.encode(texts, show_progress_bar=True)
 
-    print("💾 Building FAISS index...")
+    print("Building FAISS index...")
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(np.array(embeddings))
@@ -95,14 +92,12 @@ def embed_and_store(chunks: List[Dict], model_name: str, faiss_index_path: str):
     with open(faiss_index_path + "_metadata.pkl", "wb") as f:
         pickle.dump(metadatas, f)
 
-    print(f"✅ FAISS index saved to: {faiss_index_path}.index")
-    print(f"✅ Metadata saved to: {faiss_index_path}_metadata.pkl")
+    print(f"FAISS index saved to: {faiss_index_path}.index")
+    print(f"Metadata saved to: {faiss_index_path}_metadata.pkl")
 
-# ------------------------------
-# Task 3.1 - Load and search
-# ------------------------------
+
 def load_faiss_index(index_path: str):
-    print("📥 Loading FAISS index and metadata...")
+    print("Loading FAISS index and metadata...")
     index = faiss.read_index(index_path + ".index")
     with open(index_path + "_metadata.pkl", "rb") as f:
         metadata = pickle.load(f)
@@ -114,17 +109,16 @@ def search_documents(query: str, model_name: str, index_path: str, k=3):
     index, metadata = load_faiss_index(index_path)
     distances, indices = index.search(np.array(query_embedding), k)
 
-    print(f"\n🔍 Top {k} Results for Query: \"{query}\"")
+    print(f"\nTop {k} Results for Query: \"{query}\"")
     for i, idx in enumerate(indices[0]):
         print(f"\nResult #{i+1} (Distance: {distances[0][i]:.4f})")
-        print(f"📄 File: {metadata[idx]['filename']} | Chunk: {metadata[idx]['chunk']}")
-        print("📝 Content Preview:")
+        print(f"File: {metadata[idx]['filename']} | Chunk: {metadata[idx]['chunk']}")
+        print("Content Preview:")
         print("-" * 40)
         print(metadata[idx]['text'][:500] + "...\n")
 
-# ------------------------------
-# Task 3.2 - MMR Search
-# ------------------------------
+
+
 def mmr(query_embedding, doc_embeddings, k=3, lambda_param=0.5):
     selected = []
     unselected = list(range(len(doc_embeddings)))
@@ -155,19 +149,18 @@ def search_documents_mmr(query: str, model_name: str, index_path: str, k=3):
     all_embeddings = np.array([index.reconstruct(i) for i in range(index.ntotal)])
     selected_indices = mmr(query_embedding, all_embeddings, k=k)
 
-    print(f"\n🧠 MMR Top {k} Diverse Results for Query: \"{query}\"")
+    print(f"\nMMR Top {k} Diverse Results for Query: \"{query}\"")
     for rank, idx in enumerate(selected_indices):
         print(f"\nResult #{rank+1}")
-        print(f"📄 File: {metadata[idx]['filename']} | Chunk: {metadata[idx]['chunk']}")
-        print("📝 Content Preview:")
+        print(f"File: {metadata[idx]['filename']} | Chunk: {metadata[idx]['chunk']}")
+        print("Content Preview:")
         print("-" * 40)
         print(metadata[idx]['text'][:500] + "...\n")
 
-# ------------------------------
-# Task 4 - RAG Answer with HuggingFace Transformers
-# ------------------------------
+
+
 def generate_answer_with_huggingface(query: str, index_path: str, model_name="google/flan-t5-base"):
-    print("\n🧠 Loading FAISS retriever and generating answer (HuggingFace)...")
+    print("\nLoading FAISS retriever and generating answer (HuggingFace)...")
     index = faiss.read_index(index_path + ".index")
     with open(index_path + "_metadata.pkl", "rb") as f:
         metadata = pickle.load(f)
@@ -193,21 +186,84 @@ Answer:"""
     generator = pipeline("text2text-generation", model=model_name, tokenizer=model_name)
     response = generator(prompt, max_new_tokens=300)[0]['generated_text']
 
-    print("\n💬 Answer:")
+    print("\nAnswer:")
     print("-" * 50)
     print(response.strip())
 
-# ------------------------------
-# Main controller
-# ------------------------------
+
+def evaluate_retrieval_system(index_path: str, model_name: str, queries: List[Dict], k=3):
+    from sklearn.metrics import precision_score, recall_score, f1_score
+
+    print(f"\nEvaluating retrieval for model: {model_name}")
+    model = SentenceTransformer(model_name)
+    index, metadata = load_faiss_index(index_path)
+    all_embeddings = np.array([index.reconstruct(i) for i in range(index.ntotal)])
+
+    y_true_all = []
+    y_pred_all = []
+
+    for item in queries:
+        query = item['query']
+        expected_keywords = item['keywords']  # list of expected words in retrieved docs
+
+        query_embedding = model.encode([query])
+        distances, indices = index.search(np.array(query_embedding), k)
+        retrieved_texts = [metadata[idx]['text'] for idx in indices[0]]
+
+        true = []
+        pred = []
+        for keyword in expected_keywords:
+            true.append(1)
+            if any(keyword.lower() in chunk.lower() for chunk in retrieved_texts):
+                pred.append(1)
+            else:
+                pred.append(0)
+
+        y_true_all.extend(true)
+        y_pred_all.extend(pred)
+
+    precision = precision_score(y_true_all, y_pred_all)
+    recall = recall_score(y_true_all, y_pred_all)
+    f1 = f1_score(y_true_all, y_pred_all)
+
+    print(f"Precision: {precision:.2f}, Recall: {recall:.2f}, F1-Score: {f1:.2f}")
+    return precision, recall, f1
+
+
+def compare_models(chunks: List[Dict], queries: List[Dict]):
+    os.makedirs("faiss_store", exist_ok=True)
+    configs = {
+        "MiniLM": {
+            "model_name": "all-MiniLM-L6-v2",
+            "index_path": "faiss_store/index_miniLM"
+        },
+        "Paraphrase-MiniLM": {
+            "model_name": "paraphrase-MiniLM-L6-v2",
+            "index_path": "faiss_store/index_paraLM"
+        }
+    }
+
+    for label, cfg in configs.items():
+        print(f"\nEmbedding with {label}...")
+        embed_and_store(chunks, model_name=cfg["model_name"], faiss_index_path=cfg["index_path"])
+
+    print("\n=== Evaluation ===")
+    for label, cfg in configs.items():
+        evaluate_retrieval_system(
+            index_path=cfg["index_path"],
+            model_name=cfg["model_name"],
+            queries=queries
+        )
+
+
 if __name__ == "__main__":
-    mode = input("Select mode: [1] Build Index  [2] Search  [3] MMR Search  [4] RAG Answer: ").strip()
+    mode = input("Select mode: [1] Build Index  [2] Search  [3] MMR Search  [4] RAG Answer  [5] Compare Models: ").strip()
 
     if mode == "1":
         docs = load_documents("documents")
-        print(f"\n✅ Loaded {len(docs)} document(s).")
+        print(f"\nLoaded {len(docs)} document(s).")
         chunks = split_documents(docs, chunk_size=500, chunk_overlap=50)
-        print(f"🧩 Split into {len(chunks)} chunks.")
+        print(f"Split into {len(chunks)} chunks.")
         os.makedirs("faiss_store", exist_ok=True)
         embed_and_store(
             chunks=chunks,
@@ -216,7 +272,7 @@ if __name__ == "__main__":
         )
 
     elif mode == "2":
-        query = input("\n💬 Enter your query: ")
+        query = input("\nEnter your query: ")
         search_documents(
             query=query,
             model_name="all-MiniLM-L6-v2",
@@ -225,7 +281,7 @@ if __name__ == "__main__":
         )
 
     elif mode == "3":
-        query = input("\n💬 Enter your query for MMR search: ")
+        query = input("\nEnter your query for MMR search: ")
         search_documents_mmr(
             query=query,
             model_name="all-MiniLM-L6-v2",
@@ -234,12 +290,25 @@ if __name__ == "__main__":
         )
 
     elif mode == "4":
-        query = input("\n💬 Enter your question for RAG LLM answer: ")
+        query = input("\nEnter your question for RAG LLM answer: ")
         generate_answer_with_huggingface(
             query=query,
             index_path="faiss_store/index_miniLM",
             model_name="google/flan-t5-base"
         )
 
+    
+    elif mode == "5":
+        # Compare models
+        docs = load_documents("documents")
+        chunks = split_documents(docs, chunk_size=500, chunk_overlap=50)
+        test_queries = [
+            {"query": "What is LangChain used for?", "keywords": ["LangChain"]},
+            {"query": "Explain semantic similarity search", "keywords": ["semantic", "similarity"]},
+            {"query": "What is FAISS used for?", "keywords": ["FAISS"]}
+        ]
+        compare_models(chunks, queries=test_queries)
+
     else:
-        print("❌ Invalid option. Choose 1, 2, 3, or 4.")
+        print("Invalid option. Choose 1, 2, 3, or 4.")
+
